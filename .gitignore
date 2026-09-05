@@ -4,3 +4,7 @@
 .vscode/*
 
 bin/*
+
+.claude/*
+.agents/*
+.opencode/*
