@@ -128,8 +128,10 @@
          [callback (lambda (b e) (do-run!))]))
 
   (define results (new text%))
+  (send results auto-wrap #t)
   (define results-canvas
-    (new editor-canvas% [parent right-column] [editor results] [stretchable-height #f] [min-height 120]))
+    (new editor-canvas% [parent right-column] [editor results] [stretchable-height #f] [min-height 120]
+         [style '(no-hscroll)]))
 
   (define (get-selected-filename)
     (define sel (send file-list get-selection))

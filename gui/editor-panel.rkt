@@ -76,8 +76,10 @@
 
   (define instructions
     (new text%))
+  (send instructions auto-wrap #t)
   (define instructions-canvas
-    (new editor-canvas% [parent right-column] [editor instructions] [stretchable-height #f] [min-height 160]))
+    (new editor-canvas% [parent right-column] [editor instructions] [stretchable-height #f] [min-height 160]
+         [style '(no-hscroll)]))
   (send instructions lock #f)
   (define-values (code-canvas code-text) (make-code-editor right-column #:min-height 220))
   (define button-row (new horizontal-panel% [parent right-column] [stretchable-height #f]))
@@ -89,8 +91,10 @@
          [callback (lambda (b e) (send code-text erase))]))
   (define results
     (new text%))
+  (send results auto-wrap #t)
   (define results-canvas
-    (new editor-canvas% [parent right-column] [editor results] [stretchable-height #f] [min-height 120]))
+    (new editor-canvas% [parent right-column] [editor results] [stretchable-height #f] [min-height 120]
+         [style '(no-hscroll)]))
 
   (define (selected-entry)
     (define sel (send picker get-selection))
