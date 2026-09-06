@@ -87,7 +87,8 @@
          [label "Рабочее пространство:"]
          [choices (map second WORKSPACES)]
          [style '(single)]
-         [stretchable-height #f]))
+         [stretchable-height #f]
+         [callback (lambda (l e) (on-workspace-selected!))]))
   (send workspace-picker set-selection 0)
 
   (define folder-row (new horizontal-panel% [parent panel] [stretchable-height #f]))
@@ -145,20 +146,42 @@
       (set-box! current-entry-point f)
       (send entry-point-label set-label (format "Точка входа: ~a" f))))
 
-  ;; load-folder! : path-string? -> void?
-  ;; Scans `folder-path` for .scm files, populates the file list, and
-  ;; defaults the entry point to the alphabetically-first one.
-  (define (load-folder! folder-path)
+  ;; load-folder! : path-string? [#:entry-point (or/c string? #f)] -> void?
+  ;; Scans `folder-path` for .scm files and populates the file list. The
+  ;; entry point defaults to the alphabetically-first file, unless
+  ;; `#:entry-point` names one of the found files explicitly (used when
+  ;; reopening a completed workspace's retained entry point, which may
+  ;; not be alphabetically first).
+  (define (load-folder! folder-path #:entry-point [preferred-entry #f])
     (set-box! current-folder folder-path)
     (set-box! current-open-file #f)
     (define files (scan-project-files folder-path))
     (send file-list set files)
-    (set-box! current-entry-point (and (pair? files) (car files)))
-    (send entry-point-label set-label
-          (format "Точка входа: ~a" (or (unbox current-entry-point) "(нет)")))
-    (when (pair? files)
-      (send file-list set-selection 0)
-      (select-file! (car files))))
+    (define chosen (if (and preferred-entry (member preferred-entry files))
+                        preferred-entry
+                        (and (pair? files) (car files))))
+    (set-box! current-entry-point chosen)
+    (send entry-point-label set-label (format "Точка входа: ~a" (or chosen "(нет)")))
+    (when chosen
+      (send file-list set-selection (index-of files chosen))
+      (select-file! chosen)))
+
+  ;; on-workspace-selected! : -> void?
+  ;; Review Mode for Loaded Projects (gui-lcars): if the newly selected
+  ;; workspace has a retained project ref, reopen its folder/entry point
+  ;; automatically; if the folder no longer resolves, report that instead
+  ;; of crashing, per progress-persistence's "folder is missing on
+  ;; review" scenario. A workspace with no retained ref is left as-is.
+  (define (on-workspace-selected!)
+    (match-define (list module-id label grade-fn lines-fn passed?-fn) (selected-workspace))
+    (define ref (assq module-id (progress-state-project-refs (unbox progress-box))))
+    (define ref-data (and ref (cdr ref)))
+    (cond
+      [(not ref-data) (void)]
+      [(not (directory-exists? (first ref-data)))
+       (show-results! (list (format "Папка проекта не найдена: ~a. Загрузите папку заново."
+                                     (first ref-data))))]
+      [else (load-folder! (first ref-data) #:entry-point (second ref-data))]))
 
   (define (show-results! lines)
     (send results erase)
@@ -439,4 +462,67 @@ SRC
        (send ct insert "edited-alpha")
        (send fl set-selection 1)
        (send fl command (new control-event% [event-type 'list-box]))
-       (check-equal? (call-with-input-file (build-path dir "alpha.scm") port->string) "edited-alpha")))))
+       (check-equal? (call-with-input-file (build-path dir "alpha.scm") port->string) "edited-alpha"))))
+
+  (test-case "review mode: selecting an already-completed workspace auto-reopens its retained folder/entry point"
+    (with-test-panel
+     (lambda ()
+       (define dir (current-test-dir))
+       (call-with-output-file (build-path dir "zeta.scm") (lambda (o) (display "" o))) ;; alphabetically last
+       (call-with-output-file (build-path dir "main.scm") (lambda (o) (display CORRECT-EVALUATOR-SRC o)))
+       (parameterize ([current-get-directory (lambda (msg) dir)])
+         (send (find-button (current-test-panel) "Загрузить папку") command (new control-event% [event-type 'button])))
+       ;; assign main.scm (not the default alphabetical choice) as entry point and pass
+       (define fl (find-list-box (current-test-panel) "Файлы"))
+       (send fl set-selection 0) ;; main.scm (alphabetically first of {main.scm, zeta.scm})
+       (send fl command (new control-event% [event-type 'list-box]))
+       (send (find-button (current-test-panel) "Назначить точкой входа") command (new control-event% [event-type 'button]))
+       (run-with-workspace! 0)
+       (check-true (and (member 'interpreter-eval-workspace (progress-state-completed-modules (unbox (current-pbox)))) #t))
+       ;; simulate reopening: re-select the same workspace in the picker
+       (define wp (find-list-box (current-test-panel) "Рабочее пространство"))
+       (send wp set-selection 1) ;; switch away
+       (send wp command (new control-event% [event-type 'list-box]))
+       (send wp set-selection 0) ;; switch back to Interpreter - triggers auto-reopen
+       (send wp command (new control-event% [event-type 'list-box]))
+       (define entry-label (find-message (current-test-panel) "Точка входа:"))
+       (check-equal? (send entry-label get-label) "Точка входа: main.scm"))))
+
+  (test-case "review mode: a missing retained folder is reported, not crashed on, and doesn't affect completion"
+    (with-test-panel
+     (lambda ()
+       (define dir (current-test-dir))
+       (call-with-output-file (build-path dir "main.scm") (lambda (o) (display CORRECT-EVALUATOR-SRC o)))
+       (parameterize ([current-get-directory (lambda (msg) dir)])
+         (send (find-button (current-test-panel) "Загрузить папку") command (new control-event% [event-type 'button])))
+       (run-with-workspace! 0)
+       (check-true (and (member 'interpreter-eval-workspace (progress-state-completed-modules (unbox (current-pbox)))) #t))
+       ;; simulate the retained folder having moved/vanished between sessions by
+       ;; pointing the ref at a path that never existed
+       (define state (unbox (current-pbox)))
+       (define bogus-path (build-path dir "does-not-exist"))
+       (set-box! (current-pbox)
+                 (record-project-ref state 'interpreter-eval-workspace (path->string bogus-path) "main.scm" #t))
+       (define wp (find-list-box (current-test-panel) "Рабочее пространство"))
+       (send wp set-selection 1)
+       (send wp command (new control-event% [event-type 'list-box]))
+       (send wp set-selection 0)
+       (send wp command (new control-event% [event-type 'list-box]))
+       ;; results area should report the missing folder
+       (define results-widget
+         (find-widget (current-test-panel)
+                      (lambda (c) (and (is-a? c editor-canvas%)
+                                        (regexp-match? #px"не найдена" (send (send c get-editor) get-text))))))
+       (check-not-false results-widget)
+       (check-true (and (member 'interpreter-eval-workspace (progress-state-completed-modules (unbox (current-pbox)))) #t)))))
+
+  (test-case "review mode: selecting a not-yet-completed workspace (no ref) leaves the file list empty"
+    (with-test-panel
+     (lambda ()
+       (define wp (find-list-box (current-test-panel) "Рабочее пространство"))
+       (send wp set-selection 1)
+       (send wp command (new control-event% [event-type 'list-box]))
+       (send wp set-selection 0)
+       (send wp command (new control-event% [event-type 'list-box]))
+       (define fl (find-list-box (current-test-panel) "Файлы"))
+       (check-equal? (send fl get-number) 0)))))
