@@ -8,10 +8,12 @@
 (provide run-in-sandbox
          (struct-out sandbox-result))
 
-;; A sandbox-result reports exactly one of: successful output, a timeout, an
-;; out-of-memory abort, or an uncaught error raised by the submission itself.
-(struct sandbox-result (status output) #:transparent)
+;; A sandbox-result reports exactly one of: successful output (plus whatever
+;; value `use-evaluator` returned), a timeout, an out-of-memory abort, or an
+;; uncaught error raised by the submission itself.
+(struct sandbox-result (status output value) #:transparent)
 ;; status is one of 'ok 'timeout 'out-of-memory 'error
+;; value is meaningful only when status is 'ok; #f otherwise.
 
 (define DEFAULT-TIME-LIMIT 5)   ; seconds
 (define DEFAULT-MEMORY-LIMIT 64) ; MB
@@ -41,7 +43,7 @@
         (make-evaluator 'racket/base submission-src)))
     (cond
       [(not evaluator)
-       (sandbox-result 'out-of-memory (get-output-string out))]
+       (sandbox-result 'out-of-memory (get-output-string out) #f)]
       [else
        (define result
          (with-handlers
@@ -57,13 +59,13 @@
                    'out-of-memory))]
             [exn:fail?
              (lambda (e) (cons 'error (exn-message e)))])
-           (use-evaluator evaluator)
-           'ok))
+           (cons 'ok (use-evaluator evaluator))))
        (kill-evaluator evaluator)
        (cond
-         [(eq? result 'ok) (sandbox-result 'ok (get-output-string out))]
-         [(pair? result) (sandbox-result 'error (get-output-string out))]
-         [else (sandbox-result result (get-output-string out))])])))
+         [(and (pair? result) (eq? (car result) 'ok))
+          (sandbox-result 'ok (get-output-string out) (cdr result))]
+         [(pair? result) (sandbox-result 'error (get-output-string out) #f)]
+         [else (sandbox-result result (get-output-string out) #f)])])))
 
 (module+ test
   (require rackunit)
@@ -94,4 +96,18 @@
     (define r1 (run-in-sandbox
                 "(define x 1)\n(display x)"
                 (lambda (ev) (void))))
-    (check-equal? (sandbox-result-output r1) "1")))
+    (check-equal? (sandbox-result-output r1) "1"))
+
+  (test-case "reports the evaluated value of the caller's expression"
+    (define r (run-in-sandbox
+               "(define (square x) (* x x))"
+               (lambda (ev) (ev '(square 6)))))
+    (check-equal? (sandbox-result-status r) 'ok)
+    (check-equal? (sandbox-result-value r) 36))
+
+  (test-case "value is #f when the submission errors"
+    (define r (run-in-sandbox
+               "(define (boom) (error \"nope\"))"
+               (lambda (ev) (ev '(boom)))))
+    (check-equal? (sandbox-result-status r) 'error)
+    (check-equal? (sandbox-result-value r) #f)))
