@@ -72,9 +72,13 @@
     (new editor-canvas% [parent panel] [editor instructions] [stretchable-height #f] [min-height 120]))
   (send instructions lock #f)
   (define-values (code-canvas code-text) (make-code-editor panel))
+  (define button-row (new horizontal-panel% [parent panel] [stretchable-height #f]))
   (define check-button
-    (new button% [parent panel] [label "Проверить"]
+    (new button% [parent button-row] [label "Проверить"]
          [callback (lambda (b e) (do-check!))]))
+  (define clear-button
+    (new button% [parent button-row] [label "Очистить"]
+         [callback (lambda (b e) (send code-text erase))]))
   (define results
     (new text%))
   (define results-canvas
@@ -84,12 +88,24 @@
     (define sel (send picker get-selection))
     (and sel (list-ref LESSON-DIRS sel)))
 
+  ;; retained-submission : symbol? -> (or/c string? #f)
+  ;; The player's retained last-successful-submission for module-id, if
+  ;; it is already completed and has one - the Review Mode Editor preload
+  ;; source (gui-lcars).
+  (define (retained-submission module-id)
+    (define state (unbox progress-box))
+    (and (member module-id (progress-state-completed-modules state))
+         (let ([entry (assq module-id (progress-state-last-submissions state))])
+           (and entry (cdr entry)))))
+
   (define (load-selected!)
     (define entry (selected-entry))
     (when entry
       (send instructions erase)
       (send instructions insert (lesson-md-body (cdr entry)))
-      (send code-text erase)))
+      (send code-text erase)
+      (define retained (retained-submission (car entry)))
+      (when retained (send code-text insert retained))))
 
   (define (show-results! lines)
     (send results erase)
@@ -122,6 +138,33 @@
 (module+ test
   (require rackunit)
 
+  ;; find-widget : (is-a?/c area-container<%>) (any/c -> boolean?) -> any/c
+  ;; Recursively searches a panel's children (and their children) for the
+  ;; first widget matching pred - robust against this panel's internal
+  ;; child layout (e.g. buttons nested inside a button-row sub-panel).
+  (define (find-widget container pred)
+    (or (findf pred (send container get-children))
+        (for/or ([c (in-list (send container get-children))])
+          (and (is-a? c area-container<%>) (find-widget c pred)))))
+
+  (define (find-button panel label)
+    (find-widget panel (lambda (c) (and (is-a? c button%) (equal? (send c get-label) label)))))
+
+  (define (find-code-text panel)
+    ;; the code editor's editor-canvas% is the second editor-canvas% in
+    ;; the panel (the first is the read-only instructions canvas)
+    (define canvases
+      (let loop ([container panel])
+        (append (filter (lambda (c) (is-a? c editor-canvas%)) (send container get-children))
+                (append-map (lambda (c) (if (is-a? c area-container<%>) (loop c) '()))
+                            (send container get-children)))))
+    (send (cadr canvases) get-editor))
+
+  (define (select-lesson! panel index)
+    (define picker (find-widget panel (lambda (c) (is-a? c list-box%))))
+    (send picker set-selection index)
+    (send picker command (new control-event% [event-type 'list-box])))
+
   (test-case "LESSON-DIRS: every entry points at a directory with lesson.md and tests.rktd"
     (for ([e (in-list LESSON-DIRS)])
       (check-true (file-exists? (build-path (cdr e) "lesson.md")) (format "missing lesson.md for ~a" (car e)))
@@ -147,16 +190,11 @@
        (define changed? (box #f))
        (define frame (new frame% [label "test"] [width 400] [height 400]))
        (define panel (make-editor-panel frame pbox tmp-save (lambda () (set-box! changed? #t))))
-       (define picker (findf (lambda (c) (is-a? c list-box%)) (send panel get-children)))
-       ;; select binding (index 1) and submit a correct solution
-       (send picker set-selection 1)
-       (send picker command (new control-event% [event-type 'list-box]))
-       (define code-canvas (findf (lambda (c) (is-a? c editor-canvas%)) (list-tail (send panel get-children) 2)))
-       (define code-text (send code-canvas get-editor))
+       (select-lesson! panel 1) ;; binding
+       (define code-text (find-code-text panel))
        (send code-text erase)
        (send code-text insert "(define (convert-to-cochranes w) (let ((c (* w 100))) c))")
-       (define btn (findf (lambda (c) (is-a? c button%)) (send panel get-children)))
-       (send btn command (new control-event% [event-type 'button]))
+       (send (find-button panel "Проверить") command (new control-event% [event-type 'button]))
        (check-true (unbox changed?))
        (check-true (and (member 'binding (progress-state-completed-modules (unbox pbox))) #t))
        (check-equal? (load-progress tmp-save) (unbox pbox)))
@@ -172,15 +210,78 @@
        (define changed? (box #f))
        (define frame (new frame% [label "test"] [width 400] [height 400]))
        (define panel (make-editor-panel frame pbox tmp-save (lambda () (set-box! changed? #t))))
-       (define picker (findf (lambda (c) (is-a? c list-box%)) (send panel get-children)))
-       (send picker set-selection 1)
-       (send picker command (new control-event% [event-type 'list-box]))
-       (define code-canvas (findf (lambda (c) (is-a? c editor-canvas%)) (list-tail (send panel get-children) 2)))
-       (define code-text (send code-canvas get-editor))
+       (select-lesson! panel 1) ;; binding
+       (define code-text (find-code-text panel))
        (send code-text erase)
        (send code-text insert "(define (convert-to-cochranes w) 0)") ;; wrong
-       (define btn (findf (lambda (c) (is-a? c button%)) (send panel get-children)))
-       (send btn command (new control-event% [event-type 'button]))
+       (send (find-button panel "Проверить") command (new control-event% [event-type 'button]))
        (check-false (unbox changed?))
        (check-false (file-exists? tmp-save)))
+     (lambda () (when (file-exists? tmp-save) (delete-file tmp-save)))))
+
+  (test-case "review mode: selecting an already-completed lesson preloads its retained submission"
+    (define tmp-save (make-temporary-file "editor-test~a"))
+    (delete-file tmp-save)
+    (dynamic-wind
+     void
+     (lambda ()
+       (define retained-src "(define (convert-to-cochranes w) (let ((c (* w 100))) c))")
+       (define pbox (box (record-submission (mark-completed (fresh-progress) 'binding) 'binding retained-src)))
+       (define frame (new frame% [label "test"] [width 400] [height 400]))
+       (define panel (make-editor-panel frame pbox tmp-save void))
+       (select-lesson! panel 1) ;; binding
+       (define code-text (find-code-text panel))
+       (check-equal? (send code-text get-text) retained-src))
+     (lambda () (when (file-exists? tmp-save) (delete-file tmp-save)))))
+
+  (test-case "review mode: selecting a not-yet-completed lesson still starts blank"
+    (define tmp-save (make-temporary-file "editor-test~a"))
+    (delete-file tmp-save)
+    (dynamic-wind
+     void
+     (lambda ()
+       (define pbox (box (fresh-progress)))
+       (define frame (new frame% [label "test"] [width 400] [height 400]))
+       (define panel (make-editor-panel frame pbox tmp-save void))
+       (select-lesson! panel 1) ;; binding, not completed
+       (define code-text (find-code-text panel))
+       (check-equal? (send code-text get-text) ""))
+     (lambda () (when (file-exists? tmp-save) (delete-file tmp-save)))))
+
+  (test-case "Очистить empties a preloaded code editor"
+    (define tmp-save (make-temporary-file "editor-test~a"))
+    (delete-file tmp-save)
+    (dynamic-wind
+     void
+     (lambda ()
+       (define retained-src "(define (convert-to-cochranes w) (let ((c (* w 100))) c))")
+       (define pbox (box (record-submission (mark-completed (fresh-progress) 'binding) 'binding retained-src)))
+       (define frame (new frame% [label "test"] [width 400] [height 400]))
+       (define panel (make-editor-panel frame pbox tmp-save void))
+       (select-lesson! panel 1) ;; binding, preloaded
+       (define code-text (find-code-text panel))
+       (check-equal? (send code-text get-text) retained-src)
+       (send (find-button panel "Очистить") command (new control-event% [event-type 'button]))
+       (check-equal? (send code-text get-text) ""))
+     (lambda () (when (file-exists? tmp-save) (delete-file tmp-save)))))
+
+  (test-case "review mode: re-passing a completed lesson replaces its retained submission"
+    (define tmp-save (make-temporary-file "editor-test~a"))
+    (delete-file tmp-save)
+    (dynamic-wind
+     void
+     (lambda ()
+       (define old-src "(define (convert-to-cochranes w) (let ((c (* w 100))) c))")
+       (define new-src "(define (convert-to-cochranes w) (* w 100))")
+       (define pbox (box (record-submission (mark-completed (fresh-progress) 'binding) 'binding old-src)))
+       (define frame (new frame% [label "test"] [width 400] [height 400]))
+       (define panel (make-editor-panel frame pbox tmp-save void))
+       (select-lesson! panel 1) ;; binding, preloaded with old-src
+       (define code-text (find-code-text panel))
+       (send (find-button panel "Очистить") command (new control-event% [event-type 'button]))
+       (send code-text insert new-src)
+       (send (find-button panel "Проверить") command (new control-event% [event-type 'button]))
+       (check-equal? (cdr (assq 'binding (progress-state-last-submissions (unbox pbox)))) new-src)
+       ;; still exactly one completion of binding, not duplicated
+       (check-equal? (length (filter (lambda (m) (eq? m 'binding)) (progress-state-completed-modules (unbox pbox)))) 1))
      (lambda () (when (file-exists? tmp-save) (delete-file tmp-save))))))
