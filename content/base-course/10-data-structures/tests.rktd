@@ -1,0 +1,8 @@
+;; Формат: (call <expression> expected)
+((call (lookup-officer (quote engineering)) torres)
+ (call (lookup-officer (quote science)) seven)
+ (call (lookup-officer (quote helm)) vacant)
+ (call (total-shields (vector 25 25 25 25)) 100)
+ (call (total-shields (vector 100)) 100)
+ (call (assoc-lookup (quote science) (quote ((engineering . torres) (science . seven))) (quote vacant)) seven)
+ (call (assoc-lookup (quote helm) (quote ((engineering . torres) (science . seven))) (quote vacant)) vacant))

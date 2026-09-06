@@ -22,4 +22,4 @@ GUI должен предоставлять возможность писать 
 
 Внешний вид стилизовать под интерфейс StarTrek Voyager/New Generation (LCARS) — только визуальный стиль, без сюжетного обрамления и ролей учителя/класса.
 
-Развёрнутая спецификация: `openspec/specs/` (`curriculum`, `game-progression`, `scheme-runtime`, `code-evaluation`, `advanced-project-sandboxes`, `gui-lcars`, `progress-persistence`); архитектурные решения и альтернативы — `openspec/changes/archive/2026-09-06-define-project-scope/design.md`.
+Развёрнутая спецификация: `openspec/specs/` (`curriculum`, `game-progression`, `scheme-runtime`, `code-evaluation`, `advanced-project-sandboxes`, `gui-lcars`, `progress-persistence`); архитектурные решения и альтернативы — `design.md` каждого change'а в `openspec/changes/archive/`.

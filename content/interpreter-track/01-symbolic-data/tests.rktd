@@ -1,0 +1,5 @@
+;; Формат: (call <expression> expected)
+((call (expr-operator (quote (+ 1 2))) +)
+ (call (expr-operands (quote (+ 1 2))) (1 2))
+ (call (expr-operands (quote (* 3 4 5))) (3 4 5))
+ (call (build-add-expr 3 4) (+ 3 4)))

@@ -1,0 +1,6 @@
+;; Формат: (call <expression> expected)
+((call (shield-status 10) critical)
+ (call (shield-status 20) stable)
+ (call (shield-status 79) stable)
+ (call (shield-status 80) optimal)
+ (call (shield-status 100) optimal))

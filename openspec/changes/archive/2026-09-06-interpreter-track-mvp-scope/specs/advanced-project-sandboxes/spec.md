@@ -1,17 +1,4 @@
-# advanced-project-sandboxes Specification
-
-## Purpose
-
-Defines the environments in which advanced-track projects run — starting with the Scheme Interpreter and Multitasking tracks — and how a player loads a more complex, multi-file project into the game.
-
-## Requirements
-
-### Requirement: Loadable Multi-File Projects
-The system SHALL let a player load a more complex project consisting of multiple Scheme source files from a local folder, distinct from the single-snippet inline editor.
-
-#### Scenario: Player loads a project folder
-- **WHEN** a player selects a local folder containing one or more `.scm` files
-- **THEN** the game loads it as a project and recognizes or lets the player select an entry point file
+## MODIFIED Requirements
 
 ### Requirement: Interpreter Track Evaluation Workspace
 The Scheme Interpreter track SHALL let a player implement their own evaluator (`eval`/`apply`) in Scheme, over the MVP language subset (definitions, `lambda`, conditionals, procedure application, and quotation — excluding `call/cc` and any variable or data mutation for this MVP), and SHALL exercise that evaluator against the game's reference suite of sample programs, comparing the player's evaluator's printed output to each program's expected output.
@@ -32,6 +19,8 @@ The Scheme Interpreter track SHALL let a player implement their own evaluator (`
 - **WHEN** a player's submitted evaluator implementation directly invokes Racket's built-in `eval` (or an equivalent dynamic-evaluation escape hatch) instead of interpreting the reference program itself
 - **THEN** the static check defined by `code-evaluation` blocks execution and reports that delegating evaluation is not allowed for this exercise
 
+## ADDED Requirements
+
 ### Requirement: Minimal Interpreted-Program Error Detection
 A correct player evaluator SHALL detect and report, rather than crash unrecoverably or silently continue with an incorrect result on, three error categories that are intrinsic to the evaluator itself: an unbound variable reference, an arity mismatch on an interpreted procedure call, and application of a non-procedure value. Errors originating from delegated primitive operations (for example, `car` on a non-pair) are outside this requirement, since they are already raised by the host primitives the evaluator delegates to.
 
@@ -46,21 +35,3 @@ A correct player evaluator SHALL detect and report, rather than crash unrecovera
 #### Scenario: Evaluator correctly identifies a non-procedure application
 - **WHEN** a reference program attempts to apply a non-procedure value as if it were a procedure
 - **THEN** a correct player evaluator reports this as an error rather than crashing unrecoverably or continuing with an incorrect value
-
-### Requirement: Multitasking Track Uses Real Concurrency
-The Multitasking track's sandbox SHALL use the runtime's real concurrency primitives (per the `scheme-runtime` capability), scoped for this MVP to `thread`, `semaphore`, and `channel` (`sync`, and any place-based or future-based parallelism, are excluded from this MVP), and its automated checks SHALL account for legitimate non-deterministic ordering rather than requiring an exact interleaving.
-
-#### Scenario: Concurrent solution graded despite non-determinism
-- **WHEN** a player's concurrent solution is graded
-- **THEN** the checks validate outcome invariants (for example, final shared state or absence of race conditions) rather than a single fixed execution order
-
-#### Scenario: Grading repeats execution to surface non-deterministic failures
-- **WHEN** a player's concurrent solution is graded
-- **THEN** the system runs the solution multiple times and checks the exercise's invariant after each run, and a single run that violates the invariant fails the exercise
-
-### Requirement: Unavailable Tracks Are Visible but Disabled
-Tracks not enabled in the current version (Network, Database, Object-Oriented Programming, and any others not yet built) SHALL be visible in track selection as planned, but SHALL NOT be startable.
-
-#### Scenario: Player views a not-yet-enabled track
-- **WHEN** a player opens the advanced track selection screen
-- **THEN** tracks not enabled in this version are listed and labeled as not yet available, and attempting to start one has no effect beyond that indication
