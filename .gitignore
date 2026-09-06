@@ -1,6 +1,9 @@
 *.log
 *.out
 
+# default player save file (gui/main.rkt) when no SAVE= path is given
+/progress.rktd
+
 .vscode/*
 
 bin/*

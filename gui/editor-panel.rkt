@@ -6,6 +6,7 @@
 ;; engine/progress.rkt together for the first time.
 
 (require racket/runtime-path
+         framework
          "../engine/lesson-grader.rkt"
          "../engine/progress.rkt"
          "../engine/achievements.rkt"
@@ -74,14 +75,19 @@
          [style '(single)]
          [callback (lambda (l e) (load-selected!))]))
 
+  ;; A draggable sash between the instructions and the code editor, so the
+  ;; player can resize each block by hand (defaults to 30/70).
+  (define editor-split (new panel:vertical-dragable% [parent right-column]))
+
   (define instructions
     (new text%))
   (send instructions auto-wrap #t)
   (define instructions-canvas
-    (new editor-canvas% [parent right-column] [editor instructions] [stretchable-height #f] [min-height 160]
+    (new editor-canvas% [parent editor-split] [editor instructions]
          [style '(no-hscroll)]))
   (send instructions lock #f)
-  (define-values (code-canvas code-text) (make-code-editor right-column #:min-height 220))
+  (define-values (code-canvas code-text) (make-code-editor editor-split #:min-height 100))
+  (send editor-split set-percentages '(3/10 7/10))
   (define button-row (new horizontal-panel% [parent right-column] [stretchable-height #f]))
   (define check-button
     (new button% [parent button-row] [label "Проверить"]
@@ -173,19 +179,35 @@
     (find-widget panel (lambda (c) (and (is-a? c button%) (equal? (send c get-label) label)))))
 
   (define (find-code-text panel)
-    ;; the code editor's editor-canvas% is the second editor-canvas% in
-    ;; the panel (the first is the read-only instructions canvas)
-    (define canvases
-      (let loop ([container panel])
-        (append (filter (lambda (c) (is-a? c editor-canvas%)) (send container get-children))
-                (append-map (lambda (c) (if (is-a? c area-container<%>) (loop c) '()))
-                            (send container get-children)))))
-    (send (cadr canvases) get-editor))
+    ;; the code editor's editor-canvas% is the second editor-canvas% found
+    ;; in proper depth-first document order (the first is the read-only
+    ;; instructions canvas) - each child is either collected directly or
+    ;; recursed into, never both/out-of-order, so nesting (e.g. the
+    ;; instructions+editor draggable split) doesn't reshuffle the result.
+    (define (collect-canvases container)
+      (append-map
+       (lambda (c)
+         (cond
+           [(is-a? c editor-canvas%) (list c)]
+           [(is-a? c area-container<%>) (collect-canvases c)]
+           [else '()]))
+       (send container get-children)))
+    (send (cadr (collect-canvases panel)) get-editor))
 
   (define (select-lesson! panel index)
     (define picker (find-widget panel (lambda (c) (is-a? c list-box%))))
     (send picker set-selection index)
     (send picker command (new control-event% [event-type 'list-box])))
+
+  (test-case "instructions and code editor sit in a resizable (draggable-sash) split, adjustable by the player"
+    (define pbox (box (fresh-progress)))
+    (define frame (new frame% [label "test"] [width 400] [height 400]))
+    (define panel (make-editor-panel frame pbox "/tmp/no-such-editor-split-test.rktd" void))
+    (define split (find-widget panel (lambda (c) (is-a? c panel:vertical-dragable%))))
+    (check-not-false split)
+    (check-equal? (send split get-percentages) '(3/10 7/10))
+    (send split set-percentages '(1/2 1/2))
+    (check-equal? (send split get-percentages) '(1/2 1/2)))
 
   (test-case "LESSON-DIRS: every entry points at a directory with lesson.md and tests.rktd"
     (for ([e (in-list LESSON-DIRS)])
