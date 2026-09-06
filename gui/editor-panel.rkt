@@ -8,6 +8,7 @@
 (require racket/runtime-path
          "../engine/lesson-grader.rkt"
          "../engine/progress.rkt"
+         "../engine/achievements.rkt"
          "code-editor.rkt"
          "lcars-style.rkt")
 
@@ -124,12 +125,22 @@
                                        (lesson-grade-report-blocked-symbols report))))]
         [else
          (define entries (lesson-grade-report-results report))
-         (show-results! (map result->string entries))
-         (when (andmap entry-result-passed? entries)
-           (set-box! progress-box
-                     (record-submission (mark-completed (unbox progress-box) module-id) module-id src))
-           (save-progress (unbox progress-box) save-path)
-           (on-changed))])))
+         (cond
+           [(andmap entry-result-passed? entries)
+            (set-box! progress-box
+                      (record-submission (mark-completed (unbox progress-box) module-id) module-id src))
+            ;; Retroactive Achievement Recognition During Review (game-progression):
+            ;; checked on every pass, first-time or review, regardless of prior
+            ;; completion status; grant-achievement is itself idempotent.
+            (define already-earned (progress-state-earned-achievements (unbox progress-box)))
+            (define earned (check-achievements module-id src))
+            (define newly-earned (filter (lambda (a) (not (member (car a) already-earned))) earned))
+            (for ([a (in-list earned)]) (set-box! progress-box (grant-achievement (unbox progress-box) (car a))))
+            (save-progress (unbox progress-box) save-path)
+            (on-changed)
+            (show-results! (append (map result->string entries)
+                                    (map (lambda (a) (format "Достижение получено: ~a" (cdr a))) newly-earned)))]
+           [else (show-results! (map result->string entries))])])))
 
   (send picker set-selection 0)
   (load-selected!)
@@ -284,4 +295,64 @@
        (check-equal? (cdr (assq 'binding (progress-state-last-submissions (unbox pbox)))) new-src)
        ;; still exactly one completion of binding, not duplicated
        (check-equal? (length (filter (lambda (m) (eq? m 'binding)) (progress-state-completed-modules (unbox pbox)))) 1))
+     (lambda () (when (file-exists? tmp-save) (delete-file tmp-save)))))
+
+  (test-case "a correct submission satisfying an achievement condition earns and persists it"
+    (define tmp-save (make-temporary-file "editor-test~a"))
+    (delete-file tmp-save)
+    (dynamic-wind
+     void
+     (lambda ()
+       (define pbox (box (fresh-progress)))
+       (define frame (new frame% [label "test"] [width 400] [height 400]))
+       (define panel (make-editor-panel frame pbox tmp-save void))
+       (select-lesson! panel 1) ;; binding
+       (define code-text (find-code-text panel))
+       (send code-text erase)
+       (send code-text insert "(define (convert-to-cochranes w) (* w 100))") ;; no let - earns no-let-needed
+       (send (find-button panel "Проверить") command (new control-event% [event-type 'button]))
+       (check-true (and (member 'no-let-needed (progress-state-earned-achievements (unbox pbox))) #t))
+       (check-equal? (progress-state-earned-achievements (load-progress tmp-save)) '(no-let-needed)))
+     (lambda () (when (file-exists? tmp-save) (delete-file tmp-save)))))
+
+  (test-case "Retroactive Achievement Recognition: a review pass can earn an achievement the first pass didn't"
+    (define tmp-save (make-temporary-file "editor-test~a"))
+    (delete-file tmp-save)
+    (dynamic-wind
+     void
+     (lambda ()
+       (define pbox (box (fresh-progress)))
+       (define frame (new frame% [label "test"] [width 400] [height 400]))
+       (define panel (make-editor-panel frame pbox tmp-save void))
+       (select-lesson! panel 1) ;; binding
+       (define code-text (find-code-text panel))
+       ;; first pass: uses let, no achievement
+       (send code-text insert "(define (convert-to-cochranes w) (let ((c (* w 100))) c))")
+       (send (find-button panel "Проверить") command (new control-event% [event-type 'button]))
+       (check-true (and (member 'binding (progress-state-completed-modules (unbox pbox))) #t))
+       (check-equal? (progress-state-earned-achievements (unbox pbox)) '())
+       ;; review pass: no let this time - earns the achievement despite module already completed
+       (send code-text erase)
+       (send code-text insert "(define (convert-to-cochranes w) (* w 100))")
+       (send (find-button panel "Проверить") command (new control-event% [event-type 'button]))
+       (check-true (and (member 'no-let-needed (progress-state-earned-achievements (unbox pbox))) #t))
+       ;; still exactly one completion, not duplicated (Idempotent Review Grading)
+       (check-equal? (length (filter (lambda (m) (eq? m 'binding)) (progress-state-completed-modules (unbox pbox)))) 1))
+     (lambda () (when (file-exists? tmp-save) (delete-file tmp-save)))))
+
+  (test-case "an incorrect submission never earns an achievement even if its source would satisfy the condition"
+    (define tmp-save (make-temporary-file "editor-test~a"))
+    (delete-file tmp-save)
+    (dynamic-wind
+     void
+     (lambda ()
+       (define pbox (box (fresh-progress)))
+       (define frame (new frame% [label "test"] [width 400] [height 400]))
+       (define panel (make-editor-panel frame pbox tmp-save void))
+       (select-lesson! panel 1) ;; binding
+       (define code-text (find-code-text panel))
+       ;; no let, but wrong result - fails grading
+       (send code-text insert "(define (convert-to-cochranes w) 0)")
+       (send (find-button panel "Проверить") command (new control-event% [event-type 'button]))
+       (check-equal? (progress-state-earned-achievements (unbox pbox)) '()))
      (lambda () (when (file-exists? tmp-save) (delete-file tmp-save))))))

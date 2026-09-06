@@ -3,11 +3,13 @@
 ;; Progress persistence (progress-persistence: Local Account-Free
 ;; Persistence, Human-Inspectable Save Format, Independent Per-Track
 ;; State, Resilience to Missing or Corrupt Save Data, Last Successful
-;; Submission Retained, Project-Based Exercise Reference Retained).
+;; Submission Retained, Project-Based Exercise Reference Retained;
+;; game-progression: rank is derived elsewhere from completed-modules,
+;; but earned achievements are tracked here).
 ;;
 ;; progress-state is a plain immutable value; every update returns a new
 ;; one. Module ids are the same vocabulary engine/curriculum.rkt's
-;; MODULE-TABLE uses.
+;; MODULE-TABLE uses; achievement ids are engine/achievements.rkt's.
 
 (require racket/list)
 
@@ -15,6 +17,7 @@
          mark-completed
          record-submission
          record-project-ref
+         grant-achievement
          save-progress
          load-progress
          (struct-out progress-state))
@@ -23,10 +26,11 @@
 ;; last-submissions   : (listof (cons symbol? string?))          -- module-id -> retained source
 ;; project-refs       : (listof (cons symbol? (list string? string? boolean?)))
 ;;                        -- module-id -> (folder-path entry-point pass-fail?)
-(struct progress-state (completed-modules last-submissions project-refs) #:transparent)
+;; earned-achievements : (listof symbol?)                        -- achievement ids
+(struct progress-state (completed-modules last-submissions project-refs earned-achievements) #:transparent)
 
 (define (fresh-progress)
-  (progress-state '() '() '()))
+  (progress-state '() '() '() '()))
 
 ;; mark-completed : progress-state? symbol? -> progress-state?
 (define (mark-completed state module-id)
@@ -34,7 +38,8 @@
       state
       (progress-state (cons module-id (progress-state-completed-modules state))
                        (progress-state-last-submissions state)
-                       (progress-state-project-refs state))))
+                       (progress-state-project-refs state)
+                       (progress-state-earned-achievements state))))
 
 ;; record-submission : progress-state? symbol? string? -> progress-state?
 ;; Always replaces any prior entry for module-id - covers both "first
@@ -45,7 +50,8 @@
                           (progress-state-last-submissions state)))
   (progress-state (progress-state-completed-modules state)
                    (cons (cons module-id src) others)
-                   (progress-state-project-refs state)))
+                   (progress-state-project-refs state)
+                   (progress-state-earned-achievements state)))
 
 ;; record-project-ref : progress-state? symbol? string? string? boolean? -> progress-state?
 (define (record-project-ref state module-id folder-path entry-point pass-fail?)
@@ -53,7 +59,20 @@
                           (progress-state-project-refs state)))
   (progress-state (progress-state-completed-modules state)
                    (progress-state-last-submissions state)
-                   (cons (cons module-id (list folder-path entry-point pass-fail?)) others)))
+                   (cons (cons module-id (list folder-path entry-point pass-fail?)) others)
+                   (progress-state-earned-achievements state)))
+
+;; grant-achievement : progress-state? symbol? -> progress-state?
+;; Idempotent - a no-op if achievement-id is already earned (mirrors
+;; mark-completed's pattern), satisfying achievement-catalog-content's
+;; Idempotent Achievement Granting requirement.
+(define (grant-achievement state achievement-id)
+  (if (member achievement-id (progress-state-earned-achievements state))
+      state
+      (progress-state (progress-state-completed-modules state)
+                       (progress-state-last-submissions state)
+                       (progress-state-project-refs state)
+                       (cons achievement-id (progress-state-earned-achievements state)))))
 
 ;; save-progress : progress-state? path-string? -> void?
 (define (save-progress state path)
@@ -61,20 +80,25 @@
     (lambda (out)
       (write (list (cons 'completed-modules (progress-state-completed-modules state))
                    (cons 'last-submissions (progress-state-last-submissions state))
-                   (cons 'project-refs (progress-state-project-refs state)))
+                   (cons 'project-refs (progress-state-project-refs state))
+                   (cons 'earned-achievements (progress-state-earned-achievements state)))
              out))))
 
 ;; load-progress : path-string? -> progress-state?
 ;; Never raises: a missing or unparseable save file yields a fresh state.
+;; Tolerates an old save file predating earned-achievements (defaults to
+;; '() when the key is absent, rather than erroring on a missing assq).
 (define (load-progress path)
   (cond
     [(not (file-exists? path)) (fresh-progress)]
     [else
      (with-handlers ([exn:fail? (lambda (e) (fresh-progress))])
        (define data (call-with-input-file path read))
-       (progress-state (cdr (assq 'completed-modules data))
-                        (cdr (assq 'last-submissions data))
-                        (cdr (assq 'project-refs data))))]))
+       (define (field key) (cond [(assq key data) => cdr] [else '()]))
+       (progress-state (field 'completed-modules)
+                        (field 'last-submissions)
+                        (field 'project-refs)
+                        (field 'earned-achievements)))]))
 
 (module+ test
   (require rackunit
@@ -92,13 +116,15 @@
     (with-temp-path
      (lambda (path)
        (define state
-         (record-project-ref
-          (record-submission
-           (mark-completed
-            (mark-completed (fresh-progress) 's-expr-basics)
-            'binding)
-           's-expr-basics "(quote (hull shields sensors))")
-          'interpreter-eval-workspace "/home/player/projects/my-eval" "main.rkt" #t))
+         (grant-achievement
+          (record-project-ref
+           (record-submission
+            (mark-completed
+             (mark-completed (fresh-progress) 's-expr-basics)
+             'binding)
+            's-expr-basics "(quote (hull shields sensors))")
+           'interpreter-eval-workspace "/home/player/projects/my-eval" "main.rkt" #t)
+          'no-let-needed))
        (save-progress state path)
        (define loaded (load-progress path))
        (check-equal? loaded state))))
@@ -114,6 +140,19 @@
      (lambda (path)
        (call-with-output-file path (lambda (out) (display "(not valid #%$ data" out)))
        (check-equal? (load-progress path) (fresh-progress)))))
+
+  (test-case "old-format file missing earned-achievements loads with an empty list"
+    (with-temp-path
+     (lambda (path)
+       (call-with-output-file path
+         (lambda (out)
+           (write (list (cons 'completed-modules '(binding))
+                        (cons 'last-submissions '())
+                        (cons 'project-refs '()))
+                  out)))
+       (define loaded (load-progress path))
+       (check-equal? (progress-state-earned-achievements loaded) '())
+       (check-equal? (progress-state-completed-modules loaded) '(binding)))))
 
   (test-case "independent per-track state"
     (define state
@@ -131,4 +170,9 @@
     (define state1 (record-submission (fresh-progress) 'binding "(define x 1)"))
     (define state2 (record-submission state1 'binding "(define x 2)"))
     (check-equal? (cdr (assq 'binding (progress-state-last-submissions state2))) "(define x 2)")
-    (check-equal? (length (progress-state-last-submissions state2)) 1)))
+    (check-equal? (length (progress-state-last-submissions state2)) 1))
+
+  (test-case "grant-achievement is idempotent"
+    (define state1 (grant-achievement (fresh-progress) 'no-let-needed))
+    (define state2 (grant-achievement state1 'no-let-needed))
+    (check-equal? (progress-state-earned-achievements state2) '(no-let-needed))))

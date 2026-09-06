@@ -9,6 +9,7 @@
 (require "../engine/interpreter-workspace.rkt"
          "../engine/multitasking-workspace.rkt"
          "../engine/progress.rkt"
+         "../engine/achievements.rkt"
          "code-editor.rkt"
          "lcars-style.rkt")
 
@@ -205,7 +206,17 @@
         [(passed?-fn report)
          (set-box! progress-box
                    (record-project-ref (mark-completed state module-id) module-id folder entry #t))
+         ;; Retroactive Achievement Recognition During Review (game-progression):
+         ;; checked on every pass, first-time or review, regardless of
+         ;; already-completed?; grant-achievement is itself idempotent.
+         (define already-earned (progress-state-earned-achievements (unbox progress-box)))
+         (define earned (check-achievements module-id src))
+         (define newly-earned (filter (lambda (a) (not (member (car a) already-earned))) earned))
+         (for ([a (in-list earned)]) (set-box! progress-box (grant-achievement (unbox progress-box) (car a))))
          (save-progress (unbox progress-box) save-path)
+         (unless (null? newly-earned)
+           (show-results! (append (lines-fn report)
+                                   (map (lambda (a) (format "Достижение получено: ~a" (cdr a))) newly-earned))))
          (on-changed)]
         [already-completed?
          (set-box! progress-box (record-project-ref state module-id folder entry #f))
