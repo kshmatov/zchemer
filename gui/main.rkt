@@ -11,5 +11,5 @@
       "progress.rktd"))
 
 (define state (load-progress save-path))
-(define frame (make-app-frame state))
+(define frame (make-app-frame state save-path))
 (send frame show #t)

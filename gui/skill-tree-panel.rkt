@@ -8,7 +8,8 @@
          "lcars-style.rkt")
 
 (provide module-rows
-         make-skill-tree-panel)
+         make-skill-tree-panel
+         refresh-skill-tree-panel!)
 
 ;; module-rows : (listof symbol?) -> (listof (list symbol? symbol? (is-a?/c color%) string?))
 ;; Pure: (module-id status color status-label) for every MODULE-TABLE entry,
@@ -19,14 +20,10 @@
     (define status (module-status module-id completed-set))
     (list module-id status (status->color status) (status->label status))))
 
-;; make-skill-tree-panel : (is-a?/c area-container<%>) (listof symbol?) -> (is-a?/c panel%)
-(define (make-skill-tree-panel parent completed-set)
-  (define panel (new vertical-panel% [parent parent]))
-  (define heading (new message%
-                        [parent panel]
-                        [label "ДРЕВО НАВЫКОВ"]
-                        [color ACCENT-LAVENDER]
-                        [font LCARS-FONT]))
+;; build-skill-tree-rows! : (is-a?/c area-container<%>) (listof symbol?) -> void?
+;; Shared by make-skill-tree-panel and refresh-skill-tree-panel!: appends
+;; one row per module-rows entry as a child of `panel`.
+(define (build-skill-tree-rows! panel completed-set)
   (for ([row (in-list (module-rows completed-set))])
     (define module-id (first row))
     (define color (third row))
@@ -42,8 +39,26 @@
               (send dc set-pen color 1 'solid)
               (send dc draw-rectangle 0 0 16 16))]))
     (new message% [parent row-panel] [label (symbol->string module-id)])
-    (new message% [parent row-panel] [label status-label] [color color]))
+    (new message% [parent row-panel] [label status-label] [color color])))
+
+;; make-skill-tree-panel : (is-a?/c area-container<%>) (listof symbol?) -> (is-a?/c panel%)
+(define (make-skill-tree-panel parent completed-set)
+  (define panel (new vertical-panel% [parent parent]))
+  (define heading (new message%
+                        [parent panel]
+                        [label "ДРЕВО НАВЫКОВ"]
+                        [color ACCENT-LAVENDER]
+                        [font LCARS-FONT]))
+  (build-skill-tree-rows! panel completed-set)
   panel)
+
+;; refresh-skill-tree-panel! : (is-a?/c panel%) (listof symbol?) -> void?
+;; Updates a panel built by make-skill-tree-panel in place to reflect a
+;; new completed-set, without rebuilding the panel itself.
+(define (refresh-skill-tree-panel! panel completed-set)
+  (define heading (findf (lambda (c) (is-a? c message%)) (send panel get-children)))
+  (send panel change-children (lambda (l) (list heading)))
+  (build-skill-tree-rows! panel completed-set))
 
 (module+ test
   (require rackunit)
@@ -73,4 +88,11 @@
     (define frame (new frame% [label "test"] [width 200] [height 200]))
     (define panel (make-skill-tree-panel frame '()))
     ;; heading + one horizontal-panel per module row
-    (check-equal? (length (send panel get-children)) (+ 1 (length MODULE-TABLE))))))
+    (check-equal? (length (send panel get-children)) (+ 1 (length MODULE-TABLE)))))
+
+  (test-case "refresh-skill-tree-panel! rebuilds rows in place, no leftover rows, no lost heading"
+    (define frame (new frame% [label "test"] [width 200] [height 200]))
+    (define panel (make-skill-tree-panel frame '()))
+    (refresh-skill-tree-panel! panel '(s-expr-basics binding conditionals first-class-fn))
+    (check-equal? (length (send panel get-children)) (+ 1 (length MODULE-TABLE)))
+    (check-true (ormap (lambda (c) (is-a? c message%)) (send panel get-children)))))

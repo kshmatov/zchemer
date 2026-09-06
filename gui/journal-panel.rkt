@@ -7,7 +7,8 @@
 (require "lcars-style.rkt")
 
 (provide journal-entries
-         make-journal-panel)
+         make-journal-panel
+         refresh-journal-panel!)
 
 ;; journal-entries : (listof symbol?) -> (listof string?)
 ;; Pure: the display strings for a completed-modules list, in stored order.
@@ -30,6 +31,13 @@
          [style '(single)]))
   panel)
 
+;; refresh-journal-panel! : (is-a?/c panel%) (listof symbol?) -> void?
+;; Updates a panel built by make-journal-panel in place to reflect a new
+;; completed-modules list, without rebuilding the panel itself.
+(define (refresh-journal-panel! panel completed-modules)
+  (define lb (findf (lambda (c) (is-a? c list-box%)) (send panel get-children)))
+  (send lb set (journal-entries completed-modules)))
+
 (module+ test
   (require rackunit)
 
@@ -46,4 +54,13 @@
     (define lb (findf (lambda (c) (is-a? c list-box%)) (send panel get-children)))
     (check-not-false lb)
     (check-equal? (send lb get-number) 3)
-    (check-equal? (send lb get-string 0) "a")))
+    (check-equal? (send lb get-string 0) "a"))
+
+  (test-case "refresh-journal-panel! updates the list-box in place, no leftover rows"
+    (define frame (new frame% [label "test"] [width 200] [height 200]))
+    (define panel (make-journal-panel frame '(a b c)))
+    (refresh-journal-panel! panel '(x y))
+    (define lb (findf (lambda (c) (is-a? c list-box%)) (send panel get-children)))
+    (check-equal? (send lb get-number) 2)
+    (check-equal? (send lb get-string 0) "x")
+    (check-equal? (send lb get-string 1) "y")))
