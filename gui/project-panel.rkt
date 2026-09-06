@@ -76,53 +76,60 @@
 
 ;; make-project-panel : (is-a?/c area-container<%>) (box progress-state?) string? (-> void?) -> (is-a?/c panel%)
 (define (make-project-panel parent progress-box save-path on-changed)
-  (define panel (new vertical-panel% [parent parent]))
+  (define panel (new horizontal-panel% [parent parent]))
+  (define left-column
+    (new vertical-panel% [parent panel] [min-width 260] [stretchable-width #f]))
+  (define right-column
+    (new vertical-panel% [parent panel]))
 
   (define current-folder (box #f))
   (define current-entry-point (box #f))
   (define current-open-file (box #f))
 
+  (define workspace-picker-label
+    (new message% [parent left-column] [label "Рабочее пространство:"] [color ACCENT-AMBER]))
   (define workspace-picker
     (new list-box%
-         [parent panel]
-         [label "Рабочее пространство:"]
+         [parent left-column]
+         [label #f]
          [choices (map second WORKSPACES)]
          [style '(single)]
          [stretchable-height #f]
+         [min-height 60]
          [callback (lambda (l e) (on-workspace-selected!))]))
   (send workspace-picker set-selection 0)
 
-  (define folder-row (new horizontal-panel% [parent panel] [stretchable-height #f]))
   (define load-button
-    (new button% [parent folder-row] [label "Загрузить папку"]
+    (new button% [parent left-column] [label "Загрузить папку"]
          [callback (lambda (b e)
                      (define dir ((current-get-directory) "Выберите папку проекта"))
                      (when dir (load-folder! (if (path? dir) (path->string dir) dir))))]))
   (define entry-point-label
-    (new message% [parent folder-row] [label "Точка входа: (нет)"] [color ACCENT-AMBER]))
+    (new message% [parent left-column] [label "Точка входа: (нет)"] [color ACCENT-AMBER]))
 
+  (define file-list-label
+    (new message% [parent left-column] [label "Файлы:"] [color ACCENT-LAVENDER]))
   (define file-list
     (new list-box%
-         [parent panel]
-         [label "Файлы:"]
+         [parent left-column]
+         [label #f]
          [choices '()]
          [style '(single)]
-         [stretchable-height #f]
          [callback (lambda (l e) (select-file! (get-selected-filename)))]))
 
   (define set-entry-button
-    (new button% [parent panel] [label "Назначить точкой входа"]
+    (new button% [parent left-column] [label "Назначить точкой входа"]
          [callback (lambda (b e) (assign-entry-point!))]))
 
-  (define-values (code-canvas code-text) (make-code-editor panel))
+  (define-values (code-canvas code-text) (make-code-editor right-column #:min-height 220))
 
   (define run-button
-    (new button% [parent panel] [label "Запустить"]
+    (new button% [parent right-column] [label "Запустить"]
          [callback (lambda (b e) (do-run!))]))
 
   (define results (new text%))
   (define results-canvas
-    (new editor-canvas% [parent panel] [editor results] [stretchable-height #f] [min-height 100]))
+    (new editor-canvas% [parent right-column] [editor results] [stretchable-height #f] [min-height 120]))
 
   (define (get-selected-filename)
     (define sel (send file-list get-selection))
@@ -249,9 +256,23 @@
   (define (find-button panel label)
     (find-widget panel (lambda (c) (and (is-a? c button%) (equal? (send c get-label) label)))))
 
-  (define (find-list-box panel label-substring)
-    (find-widget panel (lambda (c) (and (is-a? c list-box%)
-                                         (regexp-match? (regexp-quote label-substring) (or (send c get-label) ""))))))
+  ;; find-list-box : identifies a list-box% by the immediately preceding
+  ;; sibling message%'s label text (list-box%'s own [label ...] is #f in
+  ;; this panel's layout - the label is a separate message% above it, for
+  ;; narrow-column vertical stacking).
+  (define (find-list-box container label-substring)
+    (define children (send container get-children))
+    (define found
+      (for/or ([c (in-list children)] [i (in-naturals)])
+        (and (is-a? c list-box%)
+             (> i 0)
+             (let ([prev (list-ref children (sub1 i))])
+               (and (is-a? prev message%)
+                    (regexp-match? (regexp-quote label-substring) (send prev get-label))))
+             c)))
+    (or found
+        (for/or ([c (in-list children)])
+          (and (is-a? c area-container<%>) (find-list-box c label-substring)))))
 
   (define (find-message panel label-prefix)
     (find-widget panel (lambda (c) (and (is-a? c message%)

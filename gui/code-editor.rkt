@@ -62,9 +62,9 @@
       (highlight!))))
 
 ;; make-code-editor : (is-a?/c area-container<%>) -> (values (is-a?/c editor-canvas%) (is-a?/c lcars-code-text%))
-(define (make-code-editor parent)
+(define (make-code-editor parent #:min-height [min-height 180])
   (define t (new lcars-code-text%))
-  (define canvas (new editor-canvas% [parent parent] [editor t]))
+  (define canvas (new editor-canvas% [parent parent] [editor t] [min-height min-height]))
   (values canvas t))
 
 (module+ test

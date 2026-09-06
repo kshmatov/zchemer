@@ -58,22 +58,29 @@
 ;; persisted; on-changed is called after a successful check-and-persist so
 ;; the caller can refresh other views.
 (define (make-editor-panel parent progress-box save-path on-changed)
-  (define panel (new vertical-panel% [parent parent]))
+  (define panel (new horizontal-panel% [parent parent]))
+  (define left-column
+    (new vertical-panel% [parent panel] [min-width 220] [stretchable-width #f]))
+  (define right-column
+    (new vertical-panel% [parent panel]))
+
+  (define picker-label
+    (new message% [parent left-column] [label "Урок:"] [color ACCENT-AMBER]))
   (define picker
     (new list-box%
-         [parent panel]
-         [label "Урок:"]
+         [parent left-column]
+         [label #f]
          [choices (map (lambda (e) (symbol->string (car e))) LESSON-DIRS)]
          [style '(single)]
-         [stretchable-height #f]
          [callback (lambda (l e) (load-selected!))]))
+
   (define instructions
     (new text%))
   (define instructions-canvas
-    (new editor-canvas% [parent panel] [editor instructions] [stretchable-height #f] [min-height 120]))
+    (new editor-canvas% [parent right-column] [editor instructions] [stretchable-height #f] [min-height 160]))
   (send instructions lock #f)
-  (define-values (code-canvas code-text) (make-code-editor panel))
-  (define button-row (new horizontal-panel% [parent panel] [stretchable-height #f]))
+  (define-values (code-canvas code-text) (make-code-editor right-column #:min-height 220))
+  (define button-row (new horizontal-panel% [parent right-column] [stretchable-height #f]))
   (define check-button
     (new button% [parent button-row] [label "Проверить"]
          [callback (lambda (b e) (do-check!))]))
@@ -83,7 +90,7 @@
   (define results
     (new text%))
   (define results-canvas
-    (new editor-canvas% [parent panel] [editor results] [stretchable-height #f] [min-height 100]))
+    (new editor-canvas% [parent right-column] [editor results] [stretchable-height #f] [min-height 120]))
 
   (define (selected-entry)
     (define sel (send picker get-selection))
