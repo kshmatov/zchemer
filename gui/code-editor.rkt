@@ -65,6 +65,11 @@
 (define (make-code-editor parent #:min-height [min-height 180])
   (define t (new lcars-code-text%))
   (define canvas (new editor-canvas% [parent parent] [editor t] [min-height min-height]))
+  ;; The style deltas below paint text foreground (TEXT-COLOR/ACCENT-AMBER,
+  ;; both light colors); without also darkening the canvas's own
+  ;; background, that text renders against the system's default (usually
+  ;; white) background and becomes unreadable.
+  (send canvas set-canvas-background PANEL-COLOR)
   (values canvas t))
 
 (module+ test
@@ -83,4 +88,13 @@
                   '("define" "if")))
 
   (test-case "keyword-positions: keyword at the very start and very end of the buffer"
-    (check-equal? (keyword-positions "begin") '((0 . 5)))))
+    (check-equal? (keyword-positions "begin") '((0 . 5))))
+
+  (test-case "regression: the canvas background is darkened to match the white/amber text styles"
+    ;; Without this, text painted via style deltas (white/amber
+    ;; foreground) renders against the system's default (usually white)
+    ;; background and becomes unreadable.
+    (define-values (canvas text) (make-code-editor (new frame% [label "test"])))
+    (define bg (send canvas get-canvas-background))
+    (check-equal? (list (send bg red) (send bg green) (send bg blue))
+                  (list (send PANEL-COLOR red) (send PANEL-COLOR green) (send PANEL-COLOR blue)))))
